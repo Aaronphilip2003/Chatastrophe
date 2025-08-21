@@ -1,7 +1,7 @@
 # main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import signaling
+from routers import signaling,rooms
 
 app = FastAPI(title="Video Chat Backend", version="0.1.0")
 
@@ -21,3 +21,5 @@ async def health_check():
 
 # Include signaling (WebSocket) routes
 app.include_router(signaling.router, prefix="/ws", tags=["signaling"])
+app.include_router(rooms.router)
+
