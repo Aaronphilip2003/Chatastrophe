@@ -2,6 +2,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import signaling,rooms
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
 
 app = FastAPI(title="Video Chat Backend", version="0.1.0")
 
@@ -19,7 +23,13 @@ app.add_middleware(
 async def health_check():
     return {"status": "ok"}
 
+@app.get("/")
+async def serve_frontend():
+    index_path = os.path.join("frontend", "index.html")
+    return FileResponse(index_path)
+
 # Include signaling (WebSocket) routes
 app.include_router(signaling.router, prefix="/ws", tags=["signaling"])
 app.include_router(rooms.router)
+app.mount("/static", StaticFiles(directory="frontend", html=True), name="frontend")
 
