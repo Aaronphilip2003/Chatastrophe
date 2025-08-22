@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC Signaling Test</title>
+</head>
+<body>
+  <h2>WebRTC Signaling Test</h2>
+  <pre id="log"></pre>
+
+  <script>
+    const roomId = "a07442fb-daa0-4949-a232-497b45da5e38";
+    const ws = new WebSocket(`wss://${window.location.host}/proxy/8000/ws/${roomId}`);
+
+    const pc = new RTCPeerConnection();
+
+    function log(msg) {
+      console.log(msg);
+      document.getElementById("log").textContent += msg + "\n";
+    }
+
+    // Handle ICE candidates (local → send via WebSocket)
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        ws.send(JSON.stringify({
+          type: "candidate",
+          payload: event.candidate
+        }));
+      }
+    };
+
+    // Handle messages from WebSocket (remote → apply to RTCPeerConnection)
+    ws.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+      log("Received: " + JSON.stringify(data));
+
+      if (data.type === "offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: "answer", payload: answer }));
+      } else if (data.type === "answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+      } else if (data.type === "candidate") {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+        } catch (e) {
+          console.error("Error adding received ICE candidate", e);
+        }
+      }
+    };
+
+    // When connected, create an offer
+    ws.onopen = async () => {
+      log("WebSocket connected");
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: "offer", payload: offer }));
+    };
+  </script>
+</body>
+</html>
