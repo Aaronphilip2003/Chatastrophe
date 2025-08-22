@@ -17,20 +17,13 @@ async def signaling_endpoint(websocket: WebSocket, room_id: str):
 
     try:
         while True:
-            message = await websocket.receive()
+            # Only accept JSON messages
+            data = await websocket.receive_json()
 
-            if "text" in message:
-                data = message["text"]
-            elif "bytes" in message:
-                data = message["bytes"]
-            else:
-                data = message
-
-            # Relay to all other participants
+            # Relay JSON to all other participants
             for conn in active_connections[room_id]:
                 if conn is not websocket:
-                    await conn.send_text(str(data))
-
+                    await conn.send_json(data)
 
     except WebSocketDisconnect:
         # Remove disconnected client
