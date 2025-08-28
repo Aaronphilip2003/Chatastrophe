@@ -1,0 +1,38 @@
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebRTC + MongoDB Demo</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <h1>WebRTC + MongoDB Signaling</h1>
+      <div class="videos">
+        <div class="video-col">
+          <h2>Local</h2>
+          <video id="webcamVideo" autoplay playsinline muted></video>
+        </div>
+        <div class="video-col">
+          <h2>Remote</h2>
+          <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="webcamButton">Start webcam</button>
+        <button id="callButton" disabled>Create call</button>
+        <input id="callInput" placeholder="Call ID" />
+        <button id="answerButton" disabled>Answer</button>
+        <button id="hangupButton" disabled>Hang up</button>
+      </div>
+
+      <p class="hint">
+        Open this page in two tabs/devices. Start webcam on both. Click <b>Create call</b> in one tab, paste the ID into the other tab and click <b>Answer</b>.
+      </p>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
