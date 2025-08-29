@@ -14,9 +14,9 @@ services:
     environment:
       - MONGO_URI=mongodb://mongo:27017
       - DB_NAME=webrtc_demo
-      - PORT=4070
+      - PORT=4055
     ports:
-      - "4070:4070"
+      - "4055:4055"
     depends_on:
       - mongo
 
