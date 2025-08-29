@@ -1,22 +1,22 @@
 
 services:
-  # mongo:
-  #   image: mongo:7
-  #   restart: unless-stopped
-  #   ports:
-  #     - "27017:27017"
-  #   volumes:
-  #     - mongo_data:/data/db
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27018:27018"
+    volumes:
+      - mongo_data:/data/dbw
 
   app:
     build: .
     restart: unless-stopped
     environment:
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://mongo:27018
       - DB_NAME=webrtc_demo
-      - PORT=8080
+      - PORT=4070
     ports:
-      - "8080:8080"
+      - "4070:4070"
     depends_on:
       - mongo
 

@@ -20,8 +20,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const PORT = process.env.PORT || 8080;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
+const PORT = process.env.PORT || 4070;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27018';
 const DB_NAME = process.env.DB_NAME || 'webrtc_demo';
 const TTL_HOURS = Number(process.env.TTL_HOURS || 24);
 

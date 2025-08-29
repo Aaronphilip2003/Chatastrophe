@@ -35,7 +35,7 @@ Then open http://localhost:8080
 See `.env.example`:
 
 - `PORT`: HTTP/WebSocket port (default 8080)
-- `MONGO_URI`: e.g. `mongodb://127.0.0.1:27017` (or your Atlas URI)
+- `MONGO_URI`: e.g. `mongodb://127.0.0.1:27018` (or your Atlas URI)
 - `DB_NAME`: Mongo database name
 - `TTL_HOURS`: How long call docs should live
 
