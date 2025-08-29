@@ -1,169 +1,125 @@
-
 // server.js
-// Node WebSocket signaling server with MongoDB persistence + simple static client hosting
-require('dotenv').config();
-const path = require('path');
-const http = require('http');
+// Node server with: static hosting, WebSocket signaling, and audio chunk upload
+// Run: node server.js
+// Files saved under ./recordings/<sessionId>.webm
+
 const express = require('express');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const { WebSocketServer } = require('ws');
-const { MongoClient, ObjectId } = require('mongodb');
-const { customAlphabet } = require('nanoid');
 
+const PORT = process.env.PORT || 3000;
 const app = express();
-app.use(cors());
-app.use(express.json());
-
-// Serve client
-app.use(express.static(path.join(__dirname, 'public')));
-
 const server = http.createServer(app);
+
+// --- Static + CORS ---
+app.use(cors());
+app.use(express.static(path.join(__dirname)));
+
+// --- Ensure recordings dir exists ---
+const recordingsDir = path.join(__dirname, 'recordings');
+if (!fs.existsSync(recordingsDir)) fs.mkdirSync(recordingsDir, { recursive: true });
+
+// --- Audio chunk upload route ---
+// We accept raw binary (MediaRecorder chunks) and append to <sessionId>.webm
+app.post(
+  '/upload-audio',
+  express.raw({ type: 'application/octet-stream', limit: '200mb' }),
+  (req, res) => {
+    const sessionId = req.query.sessionId;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Missing sessionId' });
+    }
+    const filePath = path.join(recordingsDir, `${sessionId}.webm`);
+    fs.appendFile(filePath, req.body, (err) => {
+      if (err) {
+        console.error('Append error:', err);
+        return res.status(500).json({ error: 'Write failed' });
+      }
+      res.json({ ok: true });
+    });
+  }
+);
+
+// --- WebSocket signaling (very simple) ---
 const wss = new WebSocketServer({ server });
 
-const PORT = process.env.PORT || 4070;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
-const DB_NAME = process.env.DB_NAME || 'webrtc_demo';
-const TTL_HOURS = Number(process.env.TTL_HOURS || 24);
-
-const nanoid = customAlphabet('2346789BCDFGHJKMPQRTVWXY', 6); // human-friendly 6-char IDs
-
-let db, calls;
-
-// roomId -> Set<WebSocket>
+/**
+ * In-memory room map:
+ * rooms[callId] = { offerer: ws|null, answerer: ws|null }
+ * We forward SDP offers/answers and ICE candidates within the same callId.
+ */
 const rooms = new Map();
 
-function joinRoom(roomId, ws) {
-  if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-  rooms.get(roomId).add(ws);
-  ws._roomId = roomId;
-}
-
-function leaveRoom(ws) {
-  const roomId = ws._roomId;
-  if (roomId && rooms.has(roomId)) {
-    rooms.get(roomId).delete(ws);
-    if (rooms.get(roomId).size === 0) rooms.delete(roomId);
-    ws._roomId = undefined;
+function send(ws, msg) {
+  if (ws && ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify(msg));
   }
 }
-
-function broadcast(roomId, data, except) {
-  const members = rooms.get(roomId);
-  if (!members) return;
-  for (const peer of members) {
-    if (peer !== except && peer.readyState === 1) {
-      peer.send(JSON.stringify(data));
-    }
-  }
-}
-
-async function ensureIndexes() {
-  await calls.createIndex({ callId: 1 }, { unique: true });
-  await calls.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-}
-
-async function upsertCallState(callId, patch) {
-  const expiresAt = new Date(Date.now() + TTL_HOURS * 3600 * 1000);
-  await calls.updateOne(
-    { callId },
-    { $setOnInsert: { callId }, $set: { ...patch, updatedAt: new Date(), expiresAt } },
-    { upsert: true }
-  );
-}
-
-async function getCallState(callId) {
-  return calls.findOne({ callId }, { projection: { _id: 0 } });
-}
-
-// WebSocket message handlers
-const handlers = {
-  async 'create-call'(ws) {
-    const callId = nanoid();
-    joinRoom(callId, ws);
-    await upsertCallState(callId, {
-      offer: null,
-      answer: null,
-      offerCandidates: [],
-      answerCandidates: []
-    });
-    ws.send(JSON.stringify({ type: 'call-created', callId }));
-  },
-
-  async 'join-call'(ws, msg) {
-    const { callId } = msg;
-    const state = await getCallState(callId);
-    if (!state) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Call not found' }));
-      return;
-    }
-    joinRoom(callId, ws);
-    ws.send(JSON.stringify({ type: 'joined', callId, state }));
-  },
-
-  async 'offer'(ws, msg) {
-    const { callId, offer } = msg;
-    await upsertCallState(callId, { offer });
-    broadcast(callId, { type: 'offer', offer }, ws);
-  },
-
-  async 'answer'(ws, msg) {
-    const { callId, answer } = msg;
-    await upsertCallState(callId, { answer });
-    broadcast(callId, { type: 'answer', answer }, ws);
-  },
-
-  async 'ice-candidate'(ws, msg) {
-    const { callId, role, candidate } = msg;
-    const field = role === 'offer' ? 'offerCandidates' : 'answerCandidates';
-    await calls.updateOne(
-      { callId },
-      { $push: { [field]: candidate }, $set: { updatedAt: new Date() } }
-    );
-    broadcast(callId, { type: 'ice-candidate', candidate }, ws);
-  },
-
-  async 'hangup'(ws, msg) {
-    const { callId } = msg;
-    broadcast(callId, { type: 'hangup' }, ws);
-    await calls.deleteOne({ callId });
-  }
-};
 
 wss.on('connection', (ws) => {
-  ws.on('message', async (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      const fn = handlers[msg.type];
-      if (!fn) {
-        ws.send(JSON.stringify({ type: 'error', message: `Unknown type: ${msg.type}` }));
-        return;
+  let joinedCallId = null;
+  let role = null;
+
+  ws.on('message', (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+
+    if (msg.type === 'create-call') {
+      // Create a new callId
+      const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      rooms.set(callId, { offerer: null, answerer: null });
+      send(ws, { type: 'call-created', callId });
+      return;
+    }
+
+    if (msg.type === 'join' && msg.callId && msg.role) {
+      joinedCallId = msg.callId;
+      role = msg.role; // 'offer' | 'answer'
+      const room = rooms.get(joinedCallId) || { offerer: null, answerer: null };
+      if (role === 'offer') room.offerer = ws;
+      if (role === 'answer') room.answerer = ws;
+      rooms.set(joinedCallId, room);
+      // Let the peer know join ok
+      send(ws, { type: 'joined', callId: joinedCallId, role });
+      // Notify counterpart if present
+      const other = role === 'offer' ? room.answerer : room.offerer;
+      send(other, { type: 'peer-joined', role });
+      return;
+    }
+
+    if (!joinedCallId) return; // ignore until joined
+    const room = rooms.get(joinedCallId);
+    if (!room) return;
+
+    // Relay signaling inside the room
+    if (msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice-candidate' || msg.type === 'hangup') {
+      const target = (role === 'offer') ? room.answerer : room.offerer;
+      send(target, msg);
+      if (msg.type === 'hangup') {
+        // Clean up room on hangup
+        try { room.offerer?.close?.(); } catch {}
+        try { room.answerer?.close?.(); } catch {}
+        rooms.delete(joinedCallId);
       }
-      await fn(ws, msg);
-    } catch (err) {
-      console.error('WS error:', err);
-      ws.send(JSON.stringify({ type: 'error', message: 'Bad request' }));
     }
   });
 
-  ws.on('close', () => leaveRoom(ws));
-  ws.on('error', () => leaveRoom(ws));
-});
-
-// Health endpoint
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
-});
-
-(async () => {
-  const client = new MongoClient(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
-  await client.connect();
-  db = client.db(DB_NAME);
-  calls = db.collection('calls');
-  await ensureIndexes();
-  server.listen(PORT, () => {
-    console.log(`Server on http://localhost:${PORT}`);
+  ws.on('close', () => {
+    if (!joinedCallId) return;
+    const room = rooms.get(joinedCallId);
+    if (!room) return;
+    if (role === 'offer') room.offerer = null;
+    if (role === 'answer') room.answerer = null;
+    const other = role === 'offer' ? room.answerer : room.offerer;
+    send(other, { type: 'peer-left' });
+    if (!room.offerer && !room.answerer) rooms.delete(joinedCallId);
   });
-})().catch((e) => {
-  console.error('Fatal:', e);
-  process.exit(1);
+});
+
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Open http://localhost:${PORT}/index.html in two tabs to test.`);
 });

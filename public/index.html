@@ -1,44 +1,58 @@
-
+<!-- index.html -->
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WebRTC + MongoDB Demo</title>
-    <link rel="stylesheet" href="./style.css" />
-  </head>
-  <body>
-    <div class="app">
-      <h1>WebRTC + MongoDB Signaling</h1>
-      <div class="videos">
-        <div class="video-col">
-          <h2>Local</h2>
-          <video id="webcamVideo" autoplay playsinline muted></video>
-        </div>
-        <div class="video-col">
-          <h2>Remote</h2>
-          <video id="remoteVideo" autoplay playsinline></video>
-        </div>
-      </div>
+<head>
+  <meta charset="utf-8" />
+  <title>Simple WebRTC + Audio Recording</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    video { width: 360px; max-width: 45vw; background: #000; border-radius: 8px; }
+    code { background: #f2f2f2; padding: 2px 6px; border-radius: 4px; }
+    .tag { display:inline-block; padding: 2px 6px; border: 1px solid #ddd; border-radius: 4px; }
+    .muted { color: #666; }
+    button { padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; background: #f8f8f8; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ok { color: #0a7; }
+    .warn { color: #b70; }
+  </style>
+</head>
+<body>
+  <h1>WebRTC Call with Server-Saved Audio</h1>
 
-      <div class="controls">
-        <div class="control-row">
-        <button id="webcamButton" class="btn btn-primary">Start webcam</button>
-        <button id="camToggle" class="btn" disabled>Camera: On</button>
-        <button id="micToggle" class="btn" disabled>Mic: On</button>
-        </div>
-        <div class="control-row">
-        <button id="callButton" class="btn" disabled>Create call</button>
-        <input id="callInput" class="input" placeholder="Call ID" />
-        <button id="answerButton" class="btn" disabled>Answer</button>
-        <button id="hangupButton" class="btn btn-danger" disabled>Hang up</button>
-        </div>
-        </div>
+  <div class="row">
+    <button id="createBtn">Create Call (Offerer)</button>
+    <input id="callIdInput" placeholder="Paste callId to join" size="28" />
+    <button id="joinBtn">Join (Answerer)</button>
+    <button id="hangupBtn" disabled>Hang Up</button>
+  </div>
 
-      <p class="hint">
-        Open this page in two tabs/devices. Start webcam on both. Click <b>Create call</b> in one tab, paste the ID into the other tab and click <b>Answer</b>.
-      </p>
+  <div class="row">
+    <span>Call ID: <code id="callIdLabel" class="tag muted">—</code></span>
+    <span>Role: <code id="roleLabel" class="tag muted">—</code></span>
+    <span>Recording: <code id="recLabel" class="tag muted">idle</code></span>
+    <span>Session: <code id="sessionLabel" class="tag muted">—</code></span>
+  </div>
+
+  <div class="row">
+    <div class="stack">
+      <strong>Local</strong>
+      <video id="localVideo" autoplay playsinline muted></video>
     </div>
-    <script type="module" src="./app.js"></script>
-  </body>
+    <div class="stack">
+      <strong>Remote</strong>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <p class="muted">
+    Tip: Open this page in two tabs. First tab: click <em>Create Call</em> (becomes the offerer).
+    Copy the <code>callId</code>. Second tab: paste the ID and click <em>Join</em>.
+    Recording starts automatically on the offerer and saves to <code>./recordings/&lt;sessionId&gt;.webm</code> on the server.
+  </p>
+
+  <script src="./app.js"></script>
+</body>
 </html>

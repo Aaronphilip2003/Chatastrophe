@@ -1,57 +1,109 @@
+// app.js
+// Minimal WebRTC with client-side mixed audio recording => chunk upload to server
 
-// public/app.js
-const webcamVideo = document.getElementById('webcamVideo');
+const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
+const createBtn = document.getElementById('createBtn');
+const joinBtn = document.getElementById('joinBtn');
+const hangupBtn = document.getElementById('hangupBtn');
+const callIdInput = document.getElementById('callIdInput');
 
-const webcamButton = document.getElementById('webcamButton');
-const callButton = document.getElementById('callButton');
-const answerButton = document.getElementById('answerButton');
-const hangupButton = document.getElementById('hangupButton');
-const callInput = document.getElementById('callInput');
-const micToggle = document.getElementById('micToggle');
-const camToggle = document.getElementById('camToggle');
+const callIdLabel = document.getElementById('callIdLabel');
+const roleLabel = document.getElementById('roleLabel');
+const recLabel = document.getElementById('recLabel');
+const sessionLabel = document.getElementById('sessionLabel');
 
+let ws;
 let pc;
 let localStream;
 let remoteStream;
-let ws;
-let callId;
-let role; // 'offer' or 'answer'
+let role = null; // 'offer' | 'answer'
+let callId = null;
 
+// Recording mixer state
+let audioCtx = null;
+let mixDest = null;
+let mediaRecorder = null;
+let isRecording = false;
+let sessionId = null;
+
+// --- UI helpers ---
+function setCallInfo() {
+  callIdLabel.textContent = callId || '—';
+  roleLabel.textContent = role || '—';
+  sessionLabel.textContent = sessionId || '—';
+}
+function setRecState(stateText, cls = 'muted') {
+  recLabel.textContent = stateText;
+  recLabel.className = `tag ${cls}`;
+}
+
+// --- WebSocket ---
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}`);
-  ws.onmessage = (ev) => {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => console.log('WS connected');
+  ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
+
     if (msg.type === 'call-created') {
       callId = msg.callId;
-      callInput.value = callId;
+      setCallInfo();
+      // Now join as offerer
+      ws.send(JSON.stringify({ type: 'join', callId, role: 'offer' }));
+      await createOffer();
+      return;
     }
+
     if (msg.type === 'joined') {
-      const { state } = msg;
-      if (state.offer && role === 'answer') {
-        pc.setRemoteDescription(state.offer);
-      }
-      if (state.answer && role === 'offer') {
-        pc.setRemoteDescription(state.answer);
-      }
-      (state.offerCandidates || []).forEach(c => pc.addIceCandidate(c).catch(()=>{}));
-      (state.answerCandidates || []).forEach(c => pc.addIceCandidate(c).catch(()=>{}));
+      console.log('Joined room:', msg);
+      return;
     }
-    if (msg.type === 'offer' && role === 'answer') {
-      pc.setRemoteDescription(msg.offer);
-      maybeAnswer();
+
+    if (msg.type === 'peer-joined') {
+      console.log('Peer joined as', msg.role);
+      return;
     }
-    if (msg.type === 'answer' && role === 'offer') {
-      pc.setRemoteDescription(msg.answer);
+
+    if (msg.type === 'offer') {
+      await pc.setRemoteDescription(msg.offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.send(JSON.stringify({ type: 'answer', callId, answer }));
+      return;
     }
+
+    if (msg.type === 'answer') {
+      await pc.setRemoteDescription(msg.answer);
+      return;
+    }
+
     if (msg.type === 'ice-candidate') {
-      pc.addIceCandidate(msg.candidate).catch(()=>{});
+      try { await pc.addIceCandidate(msg.candidate); } catch (e) { console.warn('ICE add failed', e); }
+      return;
     }
+
     if (msg.type === 'hangup') {
       cleanup();
+      return;
+    }
+
+    if (msg.type === 'peer-left') {
+      console.log('Peer left');
+      // stop recording if running
+      stopRecording();
+      return;
     }
   };
+  ws.onclose = () => console.log('WS closed');
+}
+
+// --- Media + PC setup ---
+async function getLocalMedia() {
+  if (localStream) return localStream;
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  localVideo.srcObject = localStream;
+  return localStream;
 }
 
 function setupPC() {
@@ -60,124 +112,180 @@ function setupPC() {
   });
   remoteStream = new MediaStream();
   remoteVideo.srcObject = remoteStream;
+
+  // send our tracks
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  pc.ontrack = (ev) => ev.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+
+  // receive tracks
+  pc.ontrack = (ev) => {
+    ev.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+    // If it's an audio track and mixer exists, add to the mix
+    ev.streams[0].getAudioTracks().forEach(track => {
+      if (audioCtx && mixDest) {
+        const node = audioCtx.createMediaStreamSource(new MediaStream([track]));
+        node.connect(mixDest);
+      }
+    });
+  };
+
   pc.onicecandidate = (ev) => {
     if (ev.candidate && callId) {
-      ws.send(JSON.stringify({
-        type: 'ice-candidate',
-        callId,
-        role,
-        candidate: ev.candidate.toJSON()
-      }));
+      ws.send(JSON.stringify({ type: 'ice-candidate', callId, candidate: ev.candidate }));
     }
   };
 }
 
-async function startWebcam() {
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  webcamVideo.srcObject = localStream;
-  callButton.disabled = false;
-  answerButton.disabled = false;
-  hangupButton.disabled = false;
-  micToggle.disabled = false;
-  camToggle.disabled = false;
-  updateMicUI(true);
-  updateCamUI(true);
-}
-
-async function createCall() {
+async function createOffer() {
   role = 'offer';
+  setCallInfo();
+
+  await getLocalMedia();
   setupPC();
-  ws.send(JSON.stringify({ type: 'create-call' }));
-  ws.addEventListener('message', async function handler(ev) {
-    const msg = JSON.parse(ev.data);
-    if (msg.type === 'call-created') {
-      callId = msg.callId;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ type: 'offer', callId, offer }));
-      ws.removeEventListener('message', handler);
-    }
-  }, { once: true });
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  ws.send(JSON.stringify({ type: 'offer', callId, offer }));
+  hangupBtn.disabled = false;
+
+  // Start recording on the offerer
+  startRecording();
 }
 
-async function joinCall() {
+async function joinAsAnswerer() {
   role = 'answer';
+  setCallInfo();
+
+  await getLocalMedia();
   setupPC();
-  callId = callInput.value.trim();
-  if (!callId) return;
-  ws.send(JSON.stringify({ type: 'join-call', callId }));
-  // If offer arrives later, maybeAnswer() will run then.
-  setTimeout(maybeAnswer, 300);
+
+  ws.send(JSON.stringify({ type: 'join', callId, role: 'answer' }));
+  hangupBtn.disabled = false;
+
+  // Optional: also record on answerer (usually not needed—commented out)
+  // startRecording();
 }
 
-async function maybeAnswer() {
-  if (pc.remoteDescription && pc.signalingState === 'have-remote-offer') {
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    ws.send(JSON.stringify({ type: 'answer', callId, answer }));
-  }
-}
-
-function updateMicUI(isOn) {
-  micToggle.textContent = `Mic: ${isOn ? 'On' : 'Off'}`;
-  }
-  
-  
-  function updateCamUI(isOn) {
-  camToggle.textContent = `Camera: ${isOn ? 'On' : 'Off'}`;
-  if (!webcamVideo) return;
-  webcamVideo.classList.toggle('video-off', !isOn);
-  }
-  
-  
-  function toggleMic() {
+// --- Recording mixer (local + remote) ---
+function startRecording() {
+  if (isRecording) return;
   if (!localStream) return;
-  const track = localStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled; // toggles without stopping track
-  updateMicUI(track.enabled);
-  }
-  
-  
-  function toggleCam() {
-  if (!localStream) return;
-  const track = localStream.getVideoTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled; // keep sender; just disable
-  updateCamUI(track.enabled);
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  mixDest = audioCtx.createMediaStreamDestination();
+
+  // Add local mic
+  const localAudio = localStream.getAudioTracks()[0];
+  if (localAudio) {
+    const src = audioCtx.createMediaStreamSource(new MediaStream([localAudio]));
+    src.connect(mixDest);
   }
 
-function hangup() {
-  if (callId) ws.send(JSON.stringify({ type: 'hangup', callId }));
-  cleanup();
+  // Remote tracks will be added in ontrack (above) as they arrive
+
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus' : 'audio/webm';
+  mediaRecorder = new MediaRecorder(mixDest.stream, { mimeType });
+
+  if (!sessionId) sessionId = `${callId || 'session'}-${Date.now()}`;
+  setCallInfo();
+
+  mediaRecorder.onstart = () => setRecState('recording', 'ok');
+  mediaRecorder.onstop = () => setRecState('stopped', 'warn');
+
+  mediaRecorder.ondataavailable = async (ev) => {
+    if (!ev.data || ev.data.size === 0) return;
+    // POST chunk to server
+    try {
+      await fetch(`/upload-audio?sessionId=${encodeURIComponent(sessionId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: ev.data
+      });
+    } catch (e) {
+      console.warn('Chunk upload failed', e);
+      setRecState('upload error', 'warn');
+    }
+  };
+
+  // 5s chunks
+  mediaRecorder.start(5000);
+  isRecording = true;
 }
 
+function stopRecording() {
+  if (!isRecording) return;
+  try { mediaRecorder.stop(); } catch {}
+  isRecording = false;
+  mediaRecorder = null;
+
+  if (audioCtx) { try { audioCtx.close(); } catch {} }
+  audioCtx = null;
+  mixDest = null;
+  sessionId = null;
+  setCallInfo();
+}
+
+// --- Cleanup ---
 function cleanup() {
+  stopRecording();
+
   if (pc) {
-    pc.getSenders().forEach(s => s.track && s.track.stop());
-    pc.close();
-    pc = null;
+    try { pc.getSenders().forEach(s => s.track && s.track.stop()); } catch {}
+    try { pc.close(); } catch {}
   }
+  pc = null;
+
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
     localStream = null;
-    if (micToggle) { micToggle.disabled = true; micToggle.textContent = 'Mic: On'; }
-    if (camToggle) { camToggle.disabled = true; camToggle.textContent = 'Camera: On'; webcamVideo && webcamVideo.classList.remove('video-off'); }
+    localVideo.srcObject = null;
   }
-  remoteStream = null;
+  if (remoteStream) {
+    remoteStream.getTracks().forEach(t => t.stop());
+    remoteStream = null;
+    remoteVideo.srcObject = null;
+  }
+
   callId = null;
   role = null;
-  callButton.disabled = false;
-  answerButton.disabled = false;
+  setCallInfo();
+  setRecState('idle', 'muted');
+  hangupBtn.disabled = true;
 }
 
-webcamButton.onclick = startWebcam;
-callButton.onclick = createCall;
-answerButton.onclick = joinCall;
-hangupButton.onclick = hangup;
-micToggle.onclick = toggleMic;
-camToggle.onclick = toggleCam;
+// --- Button hooks ---
+createBtn.onclick = async () => {
+  connectWS();
+  ws.onopen = async () => {
+    ws.send(JSON.stringify({ type: 'create-call' }));
+  };
+};
 
-connectWS();
+joinBtn.onclick = async () => {
+  const id = callIdInput.value.trim();
+  if (!id) {
+    alert('Paste a callId to join');
+    return;
+  }
+  callId = id;
+  connectWS();
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'join', callId, role: 'answer' }));
+  };
+  await joinAsAnswerer();
+};
+
+hangupBtn.onclick = () => {
+  if (ws && callId) {
+    ws.send(JSON.stringify({ type: 'hangup', callId }));
+  }
+  cleanup();
+};
+
+// Ready state
+setCallInfo();
+setRecState('idle', 'muted');
+
+// HTTPS note for getUserMedia on remote hosts:
+// Use https (or localhost) for camera/mic permissions.
