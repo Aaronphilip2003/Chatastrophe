@@ -12,7 +12,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      - MONGO_URI=mongodb://mongo:27018
+      - MONGO_URI=mongodb://mongo:27017
       - DB_NAME=webrtc_demo
       - PORT=4070
     ports:
