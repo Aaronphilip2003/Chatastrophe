@@ -31,3 +31,32 @@ input { min-width: 180px; }
 @media (max-width: 900px) {
   .videos { grid-template-columns: 1fr; }
 }
+
+/* --- Controls polish --- */
+.controls { display: grid; gap: 10px; margin-top: 16px; }
+.control-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+
+.btn, .input {
+border-radius: 999px;
+border: 1px solid var(--border);
+background: var(--card);
+color: var(--fg);
+padding: 10px 14px;
+font-weight: 600;
+}
+
+
+.btn { cursor: pointer; transition: border-color .15s ease, transform .04s ease; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn:hover { border-color: var(--accent); }
+.btn:active { transform: translateY(1px); }
+.btn-primary { box-shadow: 0 0 0 1px var(--accent) inset; }
+.btn-danger { border-color: #3b1f28; background: linear-gradient(180deg, #29161d, #1b0f13); }
+
+
+.input { min-width: 200px; }
+
+
+/* Local video gets dimmed when camera off */
+.video-off { filter: grayscale(1) brightness(.7); }

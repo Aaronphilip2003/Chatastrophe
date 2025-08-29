@@ -22,12 +22,18 @@
       </div>
 
       <div class="controls">
-        <button id="webcamButton">Start webcam</button>
-        <button id="callButton" disabled>Create call</button>
-        <input id="callInput" placeholder="Call ID" />
-        <button id="answerButton" disabled>Answer</button>
-        <button id="hangupButton" disabled>Hang up</button>
-      </div>
+        <div class="control-row">
+        <button id="webcamButton" class="btn btn-primary">Start webcam</button>
+        <button id="camToggle" class="btn" disabled>Camera: On</button>
+        <button id="micToggle" class="btn" disabled>Mic: On</button>
+        </div>
+        <div class="control-row">
+        <button id="callButton" class="btn" disabled>Create call</button>
+        <input id="callInput" class="input" placeholder="Call ID" />
+        <button id="answerButton" class="btn" disabled>Answer</button>
+        <button id="hangupButton" class="btn btn-danger" disabled>Hang up</button>
+        </div>
+        </div>
 
       <p class="hint">
         Open this page in two tabs/devices. Start webcam on both. Click <b>Create call</b> in one tab, paste the ID into the other tab and click <b>Answer</b>.

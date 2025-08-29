@@ -8,6 +8,8 @@ const callButton = document.getElementById('callButton');
 const answerButton = document.getElementById('answerButton');
 const hangupButton = document.getElementById('hangupButton');
 const callInput = document.getElementById('callInput');
+const micToggle = document.getElementById('micToggle');
+const camToggle = document.getElementById('camToggle');
 
 let pc;
 let localStream;
@@ -78,6 +80,10 @@ async function startWebcam() {
   callButton.disabled = false;
   answerButton.disabled = false;
   hangupButton.disabled = false;
+  micToggle.disabled = false;
+  camToggle.disabled = false;
+  updateMicUI(true);
+  updateCamUI(true);
 }
 
 async function createCall() {
@@ -114,6 +120,35 @@ async function maybeAnswer() {
   }
 }
 
+function updateMicUI(isOn) {
+  micToggle.textContent = `Mic: ${isOn ? 'On' : 'Off'}`;
+  }
+  
+  
+  function updateCamUI(isOn) {
+  camToggle.textContent = `Camera: ${isOn ? 'On' : 'Off'}`;
+  if (!webcamVideo) return;
+  webcamVideo.classList.toggle('video-off', !isOn);
+  }
+  
+  
+  function toggleMic() {
+  if (!localStream) return;
+  const track = localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled; // toggles without stopping track
+  updateMicUI(track.enabled);
+  }
+  
+  
+  function toggleCam() {
+  if (!localStream) return;
+  const track = localStream.getVideoTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled; // keep sender; just disable
+  updateCamUI(track.enabled);
+  }
+
 function hangup() {
   if (callId) ws.send(JSON.stringify({ type: 'hangup', callId }));
   cleanup();
@@ -128,6 +163,8 @@ function cleanup() {
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop());
     localStream = null;
+    if (micToggle) { micToggle.disabled = true; micToggle.textContent = 'Mic: On'; }
+    if (camToggle) { camToggle.disabled = true; camToggle.textContent = 'Camera: On'; webcamVideo && webcamVideo.classList.remove('video-off'); }
   }
   remoteStream = null;
   callId = null;
@@ -140,5 +177,7 @@ webcamButton.onclick = startWebcam;
 callButton.onclick = createCall;
 answerButton.onclick = joinCall;
 hangupButton.onclick = hangup;
+micToggle.onclick = toggleMic;
+camToggle.onclick = toggleCam;
 
 connectWS();
